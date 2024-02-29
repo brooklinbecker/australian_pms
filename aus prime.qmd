@@ -3,6 +3,7 @@ title: "Lifespans of Australian Prime Ministers"
 date: today
 author: Brooklin Becker
 date-format: long
+thanks: "Code and data are available at: https://github.com/brooklinbecker/australian_pms.git"
 format: pdf
 bibliography: bibliography_aus.bib
 ---
