@@ -1,0 +1,223 @@
+---
+title: "Lifespans of Australian Prime Ministers"
+date: today
+author: Brooklin Becker
+date-format: long
+format: pdf
+bibliography: bibliography_aus.bib
+---
+
+```{r}
+#| include: false
+
+library(babynames)
+library(gh)
+library(here)
+library(httr)
+library(janitor)
+library(jsonlite)
+library(knitr)
+library(lubridate)
+library(pdftools)
+library(purrr)
+library(rvest)
+library(spotifyr)
+library(tesseract)
+library(tidyverse)
+library(usethis)
+library(xml2)
+library(ggplot2)
+library(kableExtra)
+library(dplyr)
+
+```
+
+```{r}
+#| include: false
+
+raw_data <-
+  read_html(
+    "https://en.wikipedia.org/wiki/List_of_prime_ministers_of_Australia"
+  )
+write_html(raw_data, "pms.html")
+
+```
+
+```{r}
+#| include: false
+
+raw_data <- read_html("pms.html")
+
+```
+
+```{r}
+#| include: false
+
+parse_data_selector_gadget <-
+  raw_data |>
+  html_element(".wikitable") |>
+  html_table()
+
+head(parse_data_selector_gadget)
+
+```
+
+```{r}
+#| include: false
+
+parsed_data <-
+  parse_data_selector_gadget |> 
+  clean_names() |> 
+  rename(raw_text = name_birth_death_constituency) |> 
+  select(raw_text) |>
+  filter(raw_text != "Name(Birth–Death)Constituency") |> 
+  distinct() 
+
+head(parsed_data)
+
+```
+
+```{r}
+#| include: false
+
+parsed_data <-
+  parsed_data |>
+  mutate(raw_text = str_squish(raw_text))
+
+head(parsed_data)
+
+```
+
+```{r}
+#| include: false
+
+initial_clean <-
+  parsed_data |>
+  separate(
+    raw_text, into = c("name", "not_name"), sep = "\\(", extra = "merge",
+  ) |> 
+  mutate(date = str_extract(not_name, "[[:digit:]]{4}–[[:digit:]]{4}"),
+         born = str_extract(not_name, "b.[[:space:]][[:digit:]]{4}")
+         ) |>
+  select(name, date, born)
+  
+head(initial_clean)
+
+```
+
+```{r}
+#| include: false
+
+cleaned_data <-
+  initial_clean |>
+  separate(date, into = c("birth", "died"), 
+           sep = "–") |>   # PMs who have died have their birth and death years 
+  # separated by a hyphen, but we need to be careful with the hyphen as it seems 
+  # to be a slightly odd type of hyphen and we need to copy/paste it.
+  mutate(
+    born = str_remove_all(born, "b.[[:space:]]"),
+    birth = if_else(!is.na(born), born, birth)
+  ) |> # Alive PMs have slightly different format
+  select(-born) |>
+  rename(born = birth) |> 
+  mutate(across(c(born, died), as.integer)) |> 
+  mutate(Age_at_Death = died - born) |> 
+  distinct() # Some of the PMs had two goes at it.
+
+head(cleaned_data)
+
+```
+
+```{r}
+#| include: false
+
+cleaned_data |>
+  head() |>
+  kable(
+    col.names = c("Prime Minister", "Birth year", "Death year", "Age at death")
+    )
+
+```
+
+```{r fig.cap="Graph shows the span of the time period in which each prime minister lived, with the bars for currently living prime ministers stopped at the current year."}
+#| echo: false
+#| include: true
+
+cleaned_data |>
+  mutate(
+    still_alive = if_else(is.na(died), "Yes", "No"),
+    died = if_else(is.na(died), as.integer(2023), died)
+  ) |>
+  mutate(name = as_factor(name)) |>
+  ggplot(
+    aes(x = born, xend = died, y = name, yend = name, color = still_alive)
+    ) +
+  geom_segment() +
+  labs(
+    x = "Year of birth", y = "Prime Minister", color = "PM is currently alive", title = "Lifespans of Australia's Prime Ministers"
+    ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "bottom") +
+  theme(axis.text.y = element_text(size = 6)) +
+  theme(plot.margin = margin(1, 1, 1, 2, "mm")) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+\newpage
+
+# Findings
+Shown in the graph on the first page is a visual representation of the lifespan of each of Australia's prime ministers since the Australian parliament's inception in 1901. The time period from 1901 to present spans 123 years, in which 31 prime ministers assumed office. Out of the country's 31 prime ministers, 8 are still living, in which all 8 are also the most recent prime ministers - office-holding prime minister included.
+
+As expected, there is some variation in the years lived of prime ministers, as the red bars are of different lengths for different prime ministers that passed away. Below is a table summarizing the minimum, maximum, and average years lived for deceased prime ministers. There is no name for the average, so a placeholder of "NA" is used.
+
+The average of all years lived of deceased prime ministers is essentially halfway between the two ends of the range of years lived, namely the minimum and maximum values. This shows that at first glance, without showing the entire distribution of years lived, the data appears to be fairly symmetric about the mean. If we wanted to make a prediction as to how long the 8 currently living prime ministers will live to, we would take the average of 78 years, and subtract it from their current age which is just the current year minus their birth year. This of course wouldn't be applicable to those prime ministers that are already past 78, namely Paul Keating and John Howard.
+
+```{r}
+#| echo: false
+#| include: true
+
+# Calculating the min, max, and average ages at death
+min_age <- round(min(cleaned_data$Age_at_Death, na.rm = TRUE), digits = 0)
+max_age <- round(max(cleaned_data$Age_at_Death, na.rm = TRUE), digits = 0)
+avg_age <- round(mean(cleaned_data$Age_at_Death, na.rm = TRUE), digits = 0)
+
+# Finding the names corresponding to the min and max ages
+name_for_min_age <- cleaned_data %>%
+  filter(Age_at_Death == min_age) %>%
+  pull(name)
+
+name_for_max_age <- cleaned_data %>%
+  filter(Age_at_Death == max_age) %>%
+  pull(name)
+
+# Creating a table with the name and numbers for the min and max ages,
+# and just the number for the average age
+age_metrics_table <- data.frame(
+  Metric = c("Minimum Age", "Maximum Age", "Average Age"),
+  Name = c(name_for_min_age, name_for_max_age, "NA"),
+  Age = c(min_age, max_age, avg_age)
+)
+
+# Print the table using kable
+kable(age_metrics_table)
+
+```
+
+# Data Source
+I scraped Wikipedia to gather this data, particularly from the Wiki page entitled *List of prime ministers of Australia* [@wikipedia_cite]. I took a similar approach as used in the example for the United Kingdom's prime ministers, however I ran into some trouble fairly quickly. In the data from the table that was gathered, some of the columns had different names compared to the example, and also the formatting differed from the example particularly in how the name, birth, death, and constituency was listed for each prime minister. This meant that some of the code had to be altered, which took longer than expected to identify because the difference in formatting for currently living prime ministers was quite minute, i.e. in the UK example it is written (born Year) and in the Australian table it is written (b. Year).
+
+It started to become more fun for me once I figured out the few code changes that needed to be made, as several of the R chunks after that point remained the same and I was able to clean the data effectively to create the new columns of the birth year, death year, and age at death for each deceased prime minister, and adjust accordingly for the 8 prime ministers still living. I like the idea of being able to scrape data from sites with data tables that have lots of unneeded noise that I can filter out and clean, in order to visualize the selected data in a different way such as the graph shown in this paper.
+
+The next time that I do this, I would like to keep more columns as part of the cleaned data being analyzed, as that will allow me to make more graphs and comparisons with the data. For data on prime ministers/presidents of countries, I would keep the columns listing the political parties, and perhaps also the time in office, as those could make for interesting visualizations through graphs.
+
+\newpage
+
+# References {.unnumbered}
+
+
+
+
+
+
